@@ -36,21 +36,20 @@ use font_kit::{
     source::SystemSource,
     sources::mem::MemSource,
 };
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use pathfinder_geometry::{
     rect::{RectF, RectI},
     transform2d::Transform2F,
     vector::{Vector2F, Vector2I},
 };
 use smallvec::SmallVec;
-use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
+use std::{borrow::Cow, cell::RefCell, char, cmp, convert::TryFrom, sync::Arc};
 
 use super::open_type::apply_features_and_fallbacks;
 
 #[allow(non_upper_case_globals)]
 const kCGImageAlphaOnly: u32 = 7;
 
-pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
+pub(crate) struct MacTextSystem(RefCell<MacTextSystemState>);
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct FontKey {
@@ -71,7 +70,7 @@ struct MacTextSystemState {
 
 impl MacTextSystem {
     pub(crate) fn new() -> Self {
-        Self(RwLock::new(MacTextSystemState {
+        Self(RefCell::new(MacTextSystemState {
             memory_source: MemSource::empty(),
             system_source: SystemSource::new(),
             fonts: Vec::new(),
@@ -91,7 +90,7 @@ impl Default for MacTextSystem {
 
 impl PlatformTextSystem for MacTextSystem {
     fn add_fonts(&self, fonts: Vec<Cow<'static, [u8]>>) -> Result<()> {
-        self.0.write().add_fonts(fonts)
+        self.0.borrow_mut().add_fonts(fonts)
     }
 
     fn all_font_names(&self) -> Vec<String> {
@@ -103,35 +102,36 @@ impl PlatformTextSystem for MacTextSystem {
         for descriptor in descriptors.into_iter() {
             names.extend(lenient_font_attributes::family_name(&descriptor));
         }
-        if let Ok(fonts_in_memory) = self.0.read().memory_source.all_families() {
+        if let Ok(fonts_in_memory) = self.0.borrow().memory_source.all_families() {
             names.extend(fonts_in_memory);
         }
         names
     }
 
     fn font_id(&self, font: &Font) -> Result<FontId> {
-        let lock = self.0.upgradable_read();
-        if let Some(font_id) = lock.font_selections.get(font) {
+        let mut inner = self.0.borrow_mut();
+        if let Some(font_id) = inner.font_selections.get(font) {
             Ok(*font_id)
         } else {
-            let mut lock = RwLockUpgradableReadGuard::upgrade(lock);
             let font_key = FontKey {
                 font_family: font.family.clone(),
                 font_features: font.features.clone(),
                 font_fallbacks: font.fallbacks.clone(),
             };
-            let candidates = if let Some(font_ids) = lock.font_ids_by_font_key.get(&font_key) {
+            let candidates = if let Some(font_ids) = inner.font_ids_by_font_key.get(&font_key) {
                 font_ids.as_slice()
             } else {
                 let font_ids =
-                    lock.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
-                lock.font_ids_by_font_key.insert(font_key.clone(), font_ids);
-                lock.font_ids_by_font_key[&font_key].as_ref()
+                    inner.load_family(&font.family, &font.features, font.fallbacks.as_ref())?;
+                inner
+                    .font_ids_by_font_key
+                    .insert(font_key.clone(), font_ids);
+                inner.font_ids_by_font_key[&font_key].as_ref()
             };
 
             let candidate_properties = candidates
                 .iter()
-                .map(|font_id| lock.fonts[font_id.0].properties())
+                .map(|font_id| inner.fonts[font_id.0].properties())
                 .collect::<SmallVec<[_; 4]>>();
 
             let ix = font_kit::matching::find_best_match(
@@ -144,31 +144,31 @@ impl PlatformTextSystem for MacTextSystem {
             )?;
 
             let font_id = candidates[ix];
-            lock.font_selections.insert(font.clone(), font_id);
+            inner.font_selections.insert(font.clone(), font_id);
             Ok(font_id)
         }
     }
 
     fn font_metrics(&self, font_id: FontId) -> FontMetrics {
-        self.0.read().fonts[font_id.0].metrics().into()
+        self.0.borrow().fonts[font_id.0].metrics().into()
     }
 
     fn typographic_bounds(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Bounds<f32>> {
-        Ok(self.0.read().fonts[font_id.0]
+        Ok(self.0.borrow().fonts[font_id.0]
             .typographic_bounds(glyph_id.0)?
             .into())
     }
 
     fn advance(&self, font_id: FontId, glyph_id: GlyphId) -> Result<Size<f32>> {
-        self.0.read().advance(font_id, glyph_id)
+        self.0.borrow().advance(font_id, glyph_id)
     }
 
     fn glyph_for_char(&self, font_id: FontId, ch: char) -> Option<GlyphId> {
-        self.0.read().glyph_for_char(font_id, ch)
+        self.0.borrow().glyph_for_char(font_id, ch)
     }
 
     fn glyph_raster_bounds(&self, params: &RenderGlyphParams) -> Result<Bounds<DevicePixels>> {
-        self.0.read().raster_bounds(params)
+        self.0.borrow().raster_bounds(params)
     }
 
     fn rasterize_glyph(
@@ -176,11 +176,11 @@ impl PlatformTextSystem for MacTextSystem {
         glyph_id: &RenderGlyphParams,
         raster_bounds: Bounds<DevicePixels>,
     ) -> Result<(Size<DevicePixels>, Vec<u8>)> {
-        self.0.read().rasterize_glyph(glyph_id, raster_bounds)
+        self.0.borrow().rasterize_glyph(glyph_id, raster_bounds)
     }
 
     fn layout_line(&self, text: &str, font_size: Pixels, font_runs: &[FontRun]) -> LineLayout {
-        self.0.write().layout_line(text, font_size, font_runs)
+        self.0.borrow_mut().layout_line(text, font_size, font_runs)
     }
 }
 

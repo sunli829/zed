@@ -6,9 +6,8 @@ use super::{
 use gpui::{App, AppContext as _, Context, Entity, Font, LineWrapper, Pixels, Task};
 use language::{Chunk, Point};
 use multi_buffer::{MultiBufferSnapshot, RowInfo};
-use smol::future::yield_now;
 use std::sync::LazyLock;
-use std::{cmp, collections::VecDeque, mem, ops::Range, time::Duration};
+use std::{cmp, collections::VecDeque, mem, ops::Range};
 use sum_tree::{Bias, Cursor, SumTree};
 use text::Patch;
 
@@ -171,48 +170,20 @@ impl WrapMap {
 
             let (font, font_size) = &self.font_with_size;
             let mut line_wrapper = cx.text_system().line_wrapper(font, *font_size);
-            let task = cx.background_spawn(async move {
-                let tab_snapshot = new_snapshot.tab_snapshot.clone();
-                let range = TabPoint::zero()..tab_snapshot.max_point();
-                let edits = new_snapshot
-                    .update(
-                        tab_snapshot,
-                        &[TabEdit {
-                            old: range.clone(),
-                            new: range.clone(),
-                        }],
-                        wrap_width,
-                        &mut line_wrapper,
-                    )
-                    .await;
-                (new_snapshot, edits)
-            });
+            let tab_snapshot = new_snapshot.tab_snapshot.clone();
+            let range = TabPoint::zero()..tab_snapshot.max_point();
+            let edits = new_snapshot.update(
+                tab_snapshot,
+                &[TabEdit {
+                    old: range.clone(),
+                    new: range.clone(),
+                }],
+                wrap_width,
+                &mut line_wrapper,
+            );
 
-            match cx
-                .background_executor()
-                .block_with_timeout(Duration::from_millis(5), task)
-            {
-                Ok((snapshot, edits)) => {
-                    self.snapshot = snapshot;
-                    self.edits_since_sync = self.edits_since_sync.compose(&edits);
-                }
-                Err(wrap_task) => {
-                    self.background_task = Some(cx.spawn(async move |this, cx| {
-                        let (snapshot, edits) = wrap_task.await;
-                        this.update(cx, |this, cx| {
-                            this.snapshot = snapshot;
-                            this.edits_since_sync = this
-                                .edits_since_sync
-                                .compose(mem::take(&mut this.interpolated_edits).invert())
-                                .compose(&edits);
-                            this.background_task = None;
-                            this.flush_edits(cx);
-                            cx.notify();
-                        })
-                        .ok();
-                    }));
-                }
-            }
+            self.snapshot = new_snapshot;
+            self.edits_since_sync = self.edits_since_sync.compose(&edits);
         } else {
             let old_rows = self.snapshot.transforms.summary().output.lines.row + 1;
             self.snapshot.transforms = SumTree::default();
@@ -254,42 +225,15 @@ impl WrapMap {
                 let mut snapshot = self.snapshot.clone();
                 let (font, font_size) = &self.font_with_size;
                 let mut line_wrapper = cx.text_system().line_wrapper(font, *font_size);
-                let update_task = cx.background_spawn(async move {
-                    let mut edits = Patch::default();
-                    for (tab_snapshot, tab_edits) in pending_edits {
-                        let wrap_edits = snapshot
-                            .update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper)
-                            .await;
-                        edits = edits.compose(&wrap_edits);
-                    }
-                    (snapshot, edits)
-                });
-
-                match cx
-                    .background_executor()
-                    .block_with_timeout(Duration::from_millis(1), update_task)
-                {
-                    Ok((snapshot, output_edits)) => {
-                        self.snapshot = snapshot;
-                        self.edits_since_sync = self.edits_since_sync.compose(&output_edits);
-                    }
-                    Err(update_task) => {
-                        self.background_task = Some(cx.spawn(async move |this, cx| {
-                            let (snapshot, edits) = update_task.await;
-                            this.update(cx, |this, cx| {
-                                this.snapshot = snapshot;
-                                this.edits_since_sync = this
-                                    .edits_since_sync
-                                    .compose(mem::take(&mut this.interpolated_edits).invert())
-                                    .compose(&edits);
-                                this.background_task = None;
-                                this.flush_edits(cx);
-                                cx.notify();
-                            })
-                            .ok();
-                        }));
-                    }
+                let mut edits = Patch::default();
+                for (tab_snapshot, tab_edits) in pending_edits {
+                    let wrap_edits =
+                        snapshot.update(tab_snapshot, &tab_edits, wrap_width, &mut line_wrapper);
+                    edits = edits.compose(&wrap_edits);
                 }
+
+                self.snapshot = snapshot;
+                self.edits_since_sync = self.edits_since_sync.compose(&edits);
             }
         }
 
@@ -395,7 +339,7 @@ impl WrapSnapshot {
         old_snapshot.compute_edits(tab_edits, self)
     }
 
-    async fn update(
+    fn update(
         &mut self,
         new_tab_snapshot: TabSnapshot,
         tab_edits: &[TabEdit],
@@ -492,7 +436,6 @@ impl WrapSnapshot {
                     }
 
                     line.clear();
-                    yield_now().await;
                 }
 
                 let mut edit_transforms = edit_transforms.into_iter();
