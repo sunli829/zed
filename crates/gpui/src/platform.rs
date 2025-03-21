@@ -590,7 +590,7 @@ impl From<RenderImageParams> for AtlasKey {
     }
 }
 
-pub(crate) trait PlatformAtlas: Send + Sync {
+pub(crate) trait PlatformAtlas {
     fn get_or_insert_with<'a>(
         &self,
         key: &AtlasKey,
