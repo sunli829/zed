@@ -3,6 +3,7 @@ use gpui::{
     PathStyle, Pixels, Point, Render, StrokeOptions, Window, WindowBounds, WindowOptions, canvas,
     div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size,
 };
+use rand::Rng;
 
 const DEFAULT_WINDOW_WIDTH: Pixels = px(800.0);
 const DEFAULT_WINDOW_HEIGHT: Pixels = px(600.0);
@@ -18,92 +19,41 @@ impl PaintingViewer {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         let mut lines = vec![];
 
-        // draw a Rust logo
-        let mut builder = lyon::path::Path::svg_builder();
-        lyon::extra::rust_logo::build_logo_path(&mut builder);
-        // move down the Path
-        let mut builder: PathBuilder = builder.into();
-        builder.translate(point(px(10.), px(100.)));
-        builder.scale(0.9);
-        let path = builder.build().unwrap();
-        lines.push((path, gpui::black().into()));
-
-        // draw a lightening bolt ⚡
-        let mut builder = PathBuilder::fill();
-        builder.move_to(point(px(150.), px(200.)));
-        builder.line_to(point(px(200.), px(125.)));
-        builder.line_to(point(px(200.), px(175.)));
-        builder.line_to(point(px(250.), px(100.)));
-        let path = builder.build().unwrap();
-        lines.push((path, rgb(0x1d4ed8).into()));
-
         // draw a ⭐
-        let mut builder = PathBuilder::fill();
-        builder.move_to(point(px(350.), px(100.)));
-        builder.line_to(point(px(370.), px(160.)));
-        builder.line_to(point(px(430.), px(160.)));
-        builder.line_to(point(px(380.), px(200.)));
-        builder.line_to(point(px(400.), px(260.)));
-        builder.line_to(point(px(350.), px(220.)));
-        builder.line_to(point(px(300.), px(260.)));
-        builder.line_to(point(px(320.), px(200.)));
-        builder.line_to(point(px(270.), px(160.)));
-        builder.line_to(point(px(330.), px(160.)));
-        builder.line_to(point(px(350.), px(100.)));
-        let path = builder.build().unwrap();
-        lines.push((
-            path,
-            linear_gradient(
-                180.,
-                linear_color_stop(rgb(0xFACC15), 0.7),
-                linear_color_stop(rgb(0xD56D0C), 1.),
-            )
-            .color_space(ColorSpace::Oklab),
-        ));
+        let mut rng = rand::thread_rng();
+        for i in 0..5000 {
+            let offset_x = rng.gen_range(-400.0..400.0);
+            let offset_y = rng.gen_range(-300.0..300.0);
 
-        let square_bounds = Bounds {
-            origin: point(px(450.), px(100.)),
-            size: size(px(200.), px(80.)),
-        };
-        let height = square_bounds.size.height;
-        let horizontal_offset = height;
-        let vertical_offset = px(30.);
-        let mut builder = PathBuilder::fill();
-        builder.move_to(square_bounds.bottom_left());
-        builder.curve_to(
-            square_bounds.origin + point(horizontal_offset, vertical_offset),
-            square_bounds.origin + point(px(0.0), vertical_offset),
-        );
-        builder.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
-        builder.curve_to(
-            square_bounds.bottom_right(),
-            square_bounds.top_right() + point(px(0.0), vertical_offset),
-        );
-        builder.line_to(square_bounds.bottom_left());
-        let path = builder.build().unwrap();
-        lines.push((
-            path,
-            linear_gradient(
-                180.,
-                linear_color_stop(gpui::blue(), 0.4),
-                linear_color_stop(gpui::red(), 1.),
-            ),
-        ));
+            // 随机颜色
+            let r = rng.gen_range(0..=255);
+            let g = rng.gen_range(0..=255);
+            let b = rng.gen_range(0..=255);
 
-        // draw a wave
-        let options = StrokeOptions::default()
-            .with_line_width(1.)
-            .with_line_join(lyon::path::LineJoin::Bevel);
-        let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
-        builder.move_to(point(px(40.), px(320.)));
-        for i in 0..50 {
-            builder.line_to(point(
-                px(40.0 + i as f32 * 10.0),
-                px(320.0 + (i as f32 * 10.0).sin() * 40.0),
+            let mut builder = PathBuilder::fill();
+            builder.move_to(point(px(350. + offset_x), px(100. + offset_y)));
+            builder.line_to(point(px(370. + offset_x), px(160. + offset_y)));
+            builder.line_to(point(px(430. + offset_x), px(160. + offset_y)));
+            builder.line_to(point(px(380. + offset_x), px(200. + offset_y)));
+            builder.line_to(point(px(400. + offset_x), px(260. + offset_y)));
+            builder.line_to(point(px(350. + offset_x), px(220. + offset_y)));
+            builder.line_to(point(px(300. + offset_x), px(260. + offset_y)));
+            builder.line_to(point(px(320. + offset_x), px(200. + offset_y)));
+            builder.line_to(point(px(270. + offset_x), px(160. + offset_y)));
+            builder.line_to(point(px(330. + offset_x), px(160. + offset_y)));
+            builder.line_to(point(px(350. + offset_x), px(100. + offset_y)));
+            let path = builder.build().unwrap();
+
+            lines.push((
+                path,
+                linear_gradient(
+                    180.,
+                    linear_color_stop(rgb((r << 16) | (g << 8) | b), 0.7),
+                    linear_color_stop(rgb(0xD56D0C), 1.),
+                )
+                .color_space(ColorSpace::Oklab),
             ));
         }
-        let path = builder.build().unwrap();
-        lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
@@ -121,10 +71,12 @@ impl PaintingViewer {
 
 impl Render for PaintingViewer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        window.request_animation_frame();
+
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         let window_size = window.bounds().size;
-        let scale = window_size.width / DEFAULT_WINDOW_WIDTH;
+        let scale = 1.0; //window_size.width / DEFAULT_WINDOW_WIDTH;
         div()
             .font_family(".SystemUIFont")
             .bg(gpui::white())
@@ -162,7 +114,7 @@ impl Render for PaintingViewer {
                             move |_, _, _| {},
                             move |_, _, window, _| {
                                 for (path, color) in default_lines {
-                                    window.paint_path(path.scale(scale), color);
+                                    window.paint_path(path.clone().scale(scale), color);
                                 }
 
                                 for points in lines {
