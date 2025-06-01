@@ -21,7 +21,7 @@ impl PaintingViewer {
 
         // draw a ⭐
         let mut rng = rand::thread_rng();
-        for i in 0..500 {
+        for i in 0..5000 {
             let offset_x = rng.gen_range(-400.0..400.0);
             let offset_y = rng.gen_range(-300.0..300.0);
 
